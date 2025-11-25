@@ -41,6 +41,7 @@ export interface PredictionResponse {
   probability: number;  // Percentage (0-100)
   threshold_used: number;  // Percentage (0-100)
   hybrid_feature_count: number;
+  transaction_id?: string;  // ID for querying saved transaction and SHAP explanation
   user_email?: string;
 }
 
@@ -68,6 +69,22 @@ export interface TransactionResponse {
   features?: number[];
   hybrid_features?: number[];
   probability?: number;
+  flagged?: boolean;
+  feedback?: string;
+  analyst_email?: string;
+  flag_updated_at?: string;
+}
+
+export interface FlagTransactionRequest {
+  flagged: boolean;
+  feedback?: string;
+}
+
+export interface FlagTransactionResponse {
+  success: boolean;
+  message: string;
+  transaction_id: string;
+  flagged: boolean;
 }
 
 export interface SHAPExplanationResponse {
@@ -124,9 +141,17 @@ export const apiService = {
     return response.data;
   },
 
-  // Get SHAP explanation for transaction
+  // Get SHAP explanation for transaction (longer timeout for SHAP calculations)
   async getTransactionExplanation(transactionId: string): Promise<SHAPExplanationResponse> {
-    const response = await api.get<SHAPExplanationResponse>(`/api/transactions/${transactionId}/explain`);
+    const response = await api.get<SHAPExplanationResponse>(`/api/transactions/${transactionId}/explain`, {
+      timeout: 90000 // 90 seconds for SHAP explanations
+    });
+    return response.data;
+  },
+
+  // Flag or unflag a transaction
+  async flagTransaction(transactionId: string, request: FlagTransactionRequest): Promise<FlagTransactionResponse> {
+    const response = await api.post<FlagTransactionResponse>(`/api/transactions/${transactionId}/flag`, request);
     return response.data;
   }
 };

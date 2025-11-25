@@ -545,7 +545,14 @@ class TransactionSender:
             )
             
             if response.status_code == 200:
-                result = response.json()
+                try:
+                    result = response.json()
+                except ValueError as json_err:
+                    # Response is not valid JSON
+                    logger.error(f"API returned non-JSON response (status {response.status_code}): {response.text[:200]}")
+                    self.failed_predictions += 1
+                    return None
+                
                 self.successful_predictions += 1
                 
                 # Check if prediction matches true label
@@ -592,13 +599,24 @@ class TransactionSender:
                 return log_entry
             else:
                 self.failed_predictions += 1
-                error_detail = response.json().get('detail', 'Unknown error')
-                logger.error(f"prediction failed: {error_detail}")
+                try:
+                    error_detail = response.json().get('detail', response.text[:200])
+                except ValueError:
+                    error_detail = f"HTTP {response.status_code}: {response.text[:200]}"
+                logger.error(f"Prediction failed (status {response.status_code}): {error_detail}")
                 return None
                 
+        except requests.exceptions.Timeout:
+            self.failed_predictions += 1
+            logger.error(f"Request timeout: API did not respond within 10 seconds")
+            return None
+        except requests.exceptions.ConnectionError:
+            self.failed_predictions += 1
+            logger.error(f"Connection error: API server may not be running")
+            return None
         except Exception as e:
             self.failed_predictions += 1
-            logger.error(f"Error sending transaction: {e}")
+            logger.error(f"Error sending transaction: {type(e).__name__}: {e}")
             return None
     
     def send_batch(self, transactions: List[Dict]) -> List[Dict]:

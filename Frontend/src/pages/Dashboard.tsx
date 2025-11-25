@@ -27,24 +27,71 @@ export default function Dashboard() {
 
   // Convert backend transaction to frontend Transaction format
   const convertTransaction = (backendTx: TransactionResponse): Transaction => {
-    const date = new Date(backendTx.timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    let timeAgo = "";
-    if (diffMins < 1) timeAgo = "Just now";
-    else if (diffMins < 60) timeAgo = `${diffMins}m ago`;
-    else if (diffMins < 1440) timeAgo = `${Math.floor(diffMins / 60)}h ago`;
-    else timeAgo = `${Math.floor(diffMins / 1440)}d ago`;
+    try {
+      // Handle missing or invalid timestamp
+      let timeAgo = "Unknown";
+      if (backendTx.timestamp) {
+        try {
+          const date = new Date(backendTx.timestamp);
+          if (!isNaN(date.getTime())) {
+            const now = new Date();
+            const diffMs = now.getTime() - date.getTime();
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) timeAgo = "Just now";
+            else if (diffMins < 60) timeAgo = `${diffMins}m ago`;
+            else if (diffMins < 1440) timeAgo = `${Math.floor(diffMins / 60)}h ago`;
+            else timeAgo = `${Math.floor(diffMins / 1440)}d ago`;
+          }
+        } catch (e) {
+          console.warn("Error parsing timestamp:", e);
+        }
+      }
 
-    return {
-      id: backendTx.id,
-      amount: backendTx.amount,
-      time: timeAgo,
-      riskScore: backendTx.risk_score,
-      status: backendTx.status,
-    };
+      // Use flagged status if transaction is flagged, otherwise use risk-based status
+      let status: "clear" | "flagged" | "review" = "clear";
+      if (backendTx.flagged) {
+        status = "flagged";
+      } else if (backendTx.status) {
+        // Map backend status to frontend status
+        const backendStatus = backendTx.status.toLowerCase();
+        if (backendStatus === "flagged") {
+          status = "flagged";
+        } else if (backendStatus === "review") {
+          status = "review";
+        } else {
+          status = "clear";
+        }
+      } else {
+        // Fallback: use risk score to determine status
+        const riskScore = backendTx.risk_score || 0;
+        if (riskScore >= 70) {
+          status = "flagged";
+        } else if (riskScore >= 50) {
+          status = "review";
+        } else {
+          status = "clear";
+        }
+      }
+
+      return {
+        id: backendTx.id || "unknown",
+        amount: backendTx.amount || 0,
+        time: timeAgo,
+        riskScore: backendTx.risk_score || 0,
+        status: status,
+      };
+    } catch (error) {
+      console.error("Error converting transaction:", error, backendTx);
+      // Return a safe default transaction
+      return {
+        id: backendTx?.id || "error",
+        amount: backendTx?.amount || 0,
+        time: "Unknown",
+        riskScore: backendTx?.risk_score || 0,
+        status: "clear",
+      };
+    }
   };
 
   useEffect(() => {
@@ -62,30 +109,26 @@ export default function Dashboard() {
       }, 500);
     }
 
+    // Initial load - fetch stats and existing transactions
     let initialLoad = true;
-    const fetchData = async () => {
-      if (initialLoad) setLoading(true);
+    const fetchInitialData = async () => {
+      setLoading(true);
       try {
-        // Fetch stats and transactions using the API service (handles auth automatically)
         const [statsData, transactionsData] = await Promise.all([
           apiService.getStats(),
           apiService.getTransactions(),
         ]);
         setStats(statsData);
-        
-        // Convert backend transactions to frontend format
         const convertedTransactions = transactionsData.map(convertTransaction);
         setTransactions(convertedTransactions);
-        
         setError(null);
       } catch (e: unknown) {
-        console.error("Failed to fetch dashboard data:", e);
+        console.error("Failed to fetch initial data:", e);
         if (e instanceof Error) {
           setError(e.message || "Failed to fetch data");
         } else {
           setError("Failed to fetch data");
         }
-        // Set empty defaults on error
         setStats({
           total_predictions: 0,
           fraud_detected: 0,
@@ -97,9 +140,84 @@ export default function Dashboard() {
         initialLoad = false;
       }
     };
-    fetchData();
-    const intervalId = setInterval(fetchData, 5000);
-    return () => clearInterval(intervalId);
+    fetchInitialData();
+
+    // Set up real-time streaming via Server-Sent Events
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const token = localStorage.getItem('firebase_token') || '';
+    
+    const eventSource = new EventSource(`${apiBaseUrl}/api/transactions/stream`, {
+      withCredentials: true
+    });
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'connected') {
+          console.log('✅ Connected to real-time transaction stream');
+          return;
+        }
+
+        // New or updated transaction from data_generator.py or flag update
+        const updatedTransaction = convertTransaction(data);
+        
+        // Update or add transaction
+        setTransactions(prev => {
+          // Check if transaction already exists
+          const existingIndex = prev.findIndex(tx => tx.id === updatedTransaction.id);
+          const isNewTransaction = existingIndex === -1;
+          
+          if (existingIndex >= 0) {
+            // Update existing transaction (e.g., flag status changed)
+            const updated = [...prev];
+            updated[existingIndex] = updatedTransaction;
+            return updated;
+          } else {
+            // Add new transaction to beginning
+            const newList = [updatedTransaction, ...prev].slice(0, 100); // Keep last 100
+            
+            // Update stats only for new transactions
+            if (isNewTransaction) {
+              setStats(prevStats => {
+                const newTotal = (prevStats?.total_predictions || 0) + 1;
+                const newFraud = (prevStats?.fraud_detected || 0) + (updatedTransaction.status === 'flagged' ? 1 : 0);
+                return {
+                  total_predictions: newTotal,
+                  fraud_detected: newFraud,
+                  fraud_ratio: (newFraud / newTotal) * 100
+                };
+              });
+            }
+            
+            return newList;
+          }
+        });
+      } catch (e) {
+        console.error('Error parsing SSE message:', e);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      // Fallback to polling if SSE fails
+      const fallbackInterval = setInterval(async () => {
+        try {
+          const transactionsData = await apiService.getTransactions();
+          const convertedTransactions = transactionsData.map(convertTransaction);
+          setTransactions(convertedTransactions);
+        } catch (e) {
+          console.error('Fallback polling error:', e);
+        }
+      }, 5000);
+      
+      return () => clearInterval(fallbackInterval);
+    };
+
+    // Cleanup
+    return () => {
+      eventSource.close();
+    };
   }, []);
 
   const handleViewDetails = (id: string) => {
@@ -108,7 +226,8 @@ export default function Dashboard() {
   };
 
   const handleFlag = (id: string) => {
-    toast.warning(`Transaction ${id.slice(0, 12)}... flagged for review`);
+    // Navigate to transaction details where user can flag/unflag
+    navigate(`/transactions/${id}`, { state: { from: "/dashboard" } });
   };
 
   // Calculate risk distribution for pie chart
@@ -293,7 +412,7 @@ export default function Dashboard() {
                         <span className="font-mono text-xs text-muted-foreground">
                           {t.id.slice(0, 12)}...
                         </span>
-                        <span className="text-sm font-bold text-destructive">{t.riskScore}%</span>
+                        <span className="text-sm font-bold text-destructive">{t.riskScore.toFixed(2)}%</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="font-semibold">${t.amount.toLocaleString()}</span>
