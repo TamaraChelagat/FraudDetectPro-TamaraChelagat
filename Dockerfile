@@ -21,6 +21,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY app/ ./app/
 
+# Copy startup script
+COPY start.sh ./start.sh
+RUN chmod +x ./start.sh
+
 # Create directories for models and data
 # Files will be provided via Railway Volumes (mount at /app/models and /app/data/processed)
 # For local development, you can copy files manually or use volumes
@@ -42,6 +46,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
 
 # Run application with uvicorn
-# Use PORT from environment variable (Railway sets this automatically) or default to 8000
-CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"
+# Railway automatically sets PORT environment variable
+# Use startup script to handle PORT variable correctly
+CMD ["./start.sh"]
 
