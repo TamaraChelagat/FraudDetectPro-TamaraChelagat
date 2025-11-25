@@ -4,7 +4,7 @@
   publish = "Frontend/dist"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "20.19.0"
 
 # Redirect all routes to index.html for React Router (SPA routing)
 [[redirects]]
