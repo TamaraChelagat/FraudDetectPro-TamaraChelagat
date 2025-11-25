@@ -4,7 +4,7 @@ const API_BASE_URL = (import.meta.env?.VITE_API_URL as string) || 'http://localh
 
 export const API_CONFIG = {
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 60000, // Increased to 60 seconds for SHAP explanations
   headers: {
     'Content-Type': 'application/json',
   }

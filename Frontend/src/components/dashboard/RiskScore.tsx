@@ -28,7 +28,7 @@ export function RiskScore({ score, className }: RiskScoreProps) {
     <div className={cn("space-y-1", className)}>
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">Risk Score</span>
-        <span className={cn("font-bold", getTextColor(score))}>{score}</span>
+        <span className={cn("font-bold", getTextColor(score))}>{score.toFixed(2)}%</span>
       </div>
       <div className="h-2 bg-muted rounded-full overflow-hidden">
         <div

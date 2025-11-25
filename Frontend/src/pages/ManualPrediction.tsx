@@ -3,12 +3,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { AlertTriangle, CheckCircle, Loader2, Upload, FileText, Download } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle, Loader2, Upload, FileText, Download, Clipboard } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { apiService, PredictionResponse } from "@/services/api";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -19,6 +20,7 @@ interface BatchPredictionResult {
   probability: number;
   status: 'success' | 'error';
   errorMessage?: string;
+  transaction_id?: string;  // Real transaction ID from API for SHAP explanation
 }
 
 export default function ManualPrediction() {
@@ -28,6 +30,7 @@ export default function ManualPrediction() {
     prediction: string;
     probability: number;
     threshold_used: number;
+    transaction_id?: string;
   } | null>(null);
   
   // CSV Upload state
@@ -39,16 +42,108 @@ export default function ManualPrediction() {
   const [batchResults, setBatchResults] = useState<BatchPredictionResult[]>([]);
   const [showBatchResults, setShowBatchResults] = useState(false);
   
-  // Form state - 30 features: Time, V1-V28, Amount
-  const [time, setTime] = useState("");
-  const [amount, setAmount] = useState("");
-  const [vFeatures, setVFeatures] = useState<number[]>(Array(28).fill(0));
-
-  const handleVFeatureChange = (index: number, value: string) => {
-    const newVFeatures = [...vFeatures];
-    newVFeatures[index] = parseFloat(value) || 0;
-    setVFeatures(newVFeatures);
-  };
+  // Paste center state - single transaction features (must be declared before useEffect)
+  const [pastedFeatures, setPastedFeatures] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
+  
+  // Track if this is the initial mount to prevent saving on restore
+  const isInitialMount = useRef(true);
+  
+  // Restore batch results and paste center results from sessionStorage on mount
+  useEffect(() => {
+    const savedResults = sessionStorage.getItem('manualPrediction_batchResults');
+    const savedCsvData = sessionStorage.getItem('manualPrediction_csvData');
+    const savedShowResults = sessionStorage.getItem('manualPrediction_showResults');
+    const savedPasteResult = sessionStorage.getItem('manualPrediction_pasteResult');
+    const savedPastedFeatures = sessionStorage.getItem('manualPrediction_pastedFeatures');
+    
+    if (savedResults) {
+      try {
+        setBatchResults(JSON.parse(savedResults));
+      } catch (e) {
+        console.error('Failed to restore batch results:', e);
+      }
+    }
+    
+    if (savedCsvData) {
+      try {
+        setCsvData(JSON.parse(savedCsvData));
+      } catch (e) {
+        console.error('Failed to restore CSV data:', e);
+      }
+    }
+    
+    if (savedShowResults === 'true') {
+      setShowBatchResults(true);
+    }
+    
+    if (savedPasteResult) {
+      try {
+        setResult(JSON.parse(savedPasteResult));
+      } catch (e) {
+        console.error('Failed to restore paste result:', e);
+      }
+    }
+    
+    if (savedPastedFeatures) {
+      try {
+        setPastedFeatures(savedPastedFeatures);
+      } catch (e) {
+        console.error('Failed to restore pasted features:', e);
+      }
+    }
+    
+    // Mark initial mount as complete
+    isInitialMount.current = false;
+  }, []);
+  
+  // Save batch results to sessionStorage whenever they change
+  useEffect(() => {
+    // Skip saving on initial mount (when restoring from sessionStorage)
+    if (isInitialMount.current) return;
+    
+    if (batchResults.length > 0) {
+      sessionStorage.setItem('manualPrediction_batchResults', JSON.stringify(batchResults));
+    }
+  }, [batchResults]);
+  
+  // Save CSV data to sessionStorage whenever it changes
+  useEffect(() => {
+    // Skip saving on initial mount (when restoring from sessionStorage)
+    if (isInitialMount.current) return;
+    
+    if (csvData.length > 0) {
+      sessionStorage.setItem('manualPrediction_csvData', JSON.stringify(csvData));
+    }
+  }, [csvData]);
+  
+  // Save showBatchResults state
+  useEffect(() => {
+    // Skip saving on initial mount (when restoring from sessionStorage)
+    if (isInitialMount.current) return;
+    
+    sessionStorage.setItem('manualPrediction_showResults', showBatchResults.toString());
+  }, [showBatchResults]);
+  
+  // Save paste center result to sessionStorage whenever it changes
+  useEffect(() => {
+    // Skip saving on initial mount (when restoring from sessionStorage)
+    if (isInitialMount.current) return;
+    
+    if (result) {
+      sessionStorage.setItem('manualPrediction_pasteResult', JSON.stringify(result));
+    }
+  }, [result]);
+  
+  // Save pastedFeatures to sessionStorage whenever it changes
+  useEffect(() => {
+    // Skip saving on initial mount (when restoring from sessionStorage)
+    if (isInitialMount.current) return;
+    
+    if (pastedFeatures) {
+      sessionStorage.setItem('manualPrediction_pastedFeatures', pastedFeatures);
+    }
+  }, [pastedFeatures]);
 
   // CSV File Handling
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,11 +321,13 @@ export default function ManualPrediction() {
       
       try {
         const response = await apiService.predictTransaction(features);
+        
         results.push({
           transactionId: i + 1,
           prediction: response.prediction,
           probability: response.probability,
-          status: 'success'
+          status: 'success',
+          transaction_id: response.transaction_id  // Store real transaction ID for SHAP
         });
         
         if (response.prediction === 'Fraudulent') {
@@ -259,6 +356,7 @@ export default function ManualPrediction() {
     }
 
     setBatchResults(results);
+    setShowBatchResults(true);
     setBatchLoading(false);
     
     toast.success(
@@ -297,28 +395,62 @@ export default function ManualPrediction() {
     toast.success("Results downloaded successfully!");
   };
 
-  const handlePredict = async () => {
-    // Validate inputs
-    if (!time || !amount) {
-      toast.error("Please fill in Time and Amount fields");
-      return;
+  const parsePastedFeatures = (text: string): number[] | null => {
+    if (!text || !text.trim()) {
+      return null;
     }
 
-    // Build features array: [Time, V1, V2, ..., V28, Amount]
-    const features = [
-      parseFloat(time),
-      ...vFeatures,
-      parseFloat(amount)
-    ];
+    // Remove extra whitespace and split by comma, semicolon, or whitespace
+    const cleaned = text.trim().replace(/\s+/g, ' ');
+    const values = cleaned.split(/[,\s;]+/).filter(v => v.length > 0);
 
+    if (values.length === 0) {
+      setParseError("No values found. Please paste comma-separated or space-separated numbers.");
+      return null;
+    }
+
+    // Convert to numbers
+    const features = values.map(v => {
+      const num = parseFloat(v.trim());
+      return isNaN(num) ? 0 : num;
+    });
+
+    // Validate count
     if (features.length !== 30) {
-      toast.error("Invalid feature count");
+      setParseError(`Expected 30 features, got ${features.length}. Format: Time, V1, V2, ..., V28, Amount`);
+      return null;
+    }
+
+    setParseError(null);
+    return features;
+  };
+
+  const handlePasteChange = (text: string) => {
+    setPastedFeatures(text);
+    setParseError(null);
+    
+    // Auto-parse and validate on paste
+    if (text.trim()) {
+      parsePastedFeatures(text);
+    }
+  };
+
+  const handlePredict = async () => {
+    // Parse pasted features
+    const features = parsePastedFeatures(pastedFeatures);
+    
+    if (!features) {
+      if (!parseError) {
+        toast.error("Please paste transaction features (30 comma-separated values)");
+      } else {
+        toast.error(parseError);
+      }
       return;
     }
 
     // Check for NaN values
     if (features.some(isNaN)) {
-      toast.error("Please enter valid numeric values for all fields");
+      toast.error("Please enter valid numeric values for all features");
       return;
     }
 
@@ -331,6 +463,7 @@ export default function ManualPrediction() {
         prediction: response.prediction,
         probability: response.probability,
         threshold_used: response.threshold_used,
+        transaction_id: response.transaction_id,
       });
       toast.success("Prediction completed!");
       } catch (error: unknown) {
@@ -346,10 +479,12 @@ export default function ManualPrediction() {
   };
 
   const handleReset = () => {
-    setTime("");
-    setAmount("");
-    setVFeatures(Array(28).fill(0));
+    setPastedFeatures("");
+    setParseError(null);
     setResult(null);
+    // Clear sessionStorage for paste center
+    sessionStorage.removeItem('manualPrediction_pasteResult');
+    sessionStorage.removeItem('manualPrediction_pastedFeatures');
   };
 
   const isFraudulent = result?.prediction === "Fraudulent";
@@ -490,11 +625,42 @@ export default function ManualPrediction() {
                                 <TableHead>Prediction</TableHead>
                                 <TableHead>Probability</TableHead>
                                 <TableHead>Status</TableHead>
+                                <TableHead>Actions</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {batchResults.map((result) => (
-                                <TableRow key={result.transactionId}>
+                                <TableRow 
+                                  key={result.transactionId}
+                                  className={result.status === 'success' ? 'cursor-pointer hover:bg-muted/50' : ''}
+                                  onClick={() => {
+                                    if (result.status === 'success' && csvData[result.transactionId - 1]) {
+                                      // Use real transaction_id if available, otherwise create temporary one
+                                      const transactionId = result.transaction_id || `batch-${result.transactionId}-${Date.now()}`;
+                                      
+                                      // Create a transaction object from batch result
+                                      const features = csvData[result.transactionId - 1];
+                                      const transactionData = {
+                                        id: transactionId,
+                                        amount: features[features.length - 1], // Last feature is Amount
+                                        timestamp: new Date().toISOString(),
+                                        risk_score: result.probability,
+                                        status: result.prediction === 'Fraudulent' ? 'flagged' : 'clear',
+                                        prediction: result.prediction,
+                                        features: features,
+                                        probability: result.probability / 100 // Convert percentage to decimal
+                                      };
+                                      
+                                      // Navigate to transaction details with data
+                                      navigate(`/transactions/${transactionId}`, {
+                                        state: {
+                                          transaction: transactionData,
+                                          from: '/manual-prediction'
+                                        }
+                                      });
+                                    }
+                                  }}
+                                >
                                   <TableCell>{result.transactionId}</TableCell>
                                   <TableCell>
                                     <Badge
@@ -513,7 +679,31 @@ export default function ManualPrediction() {
                                         {result.errorMessage?.substring(0, 50)}...
                                       </span>
                                     ) : (
-                                      <CheckCircle className="h-4 w-4 text-green-600" />
+                                      <div className="flex items-center gap-2">
+                                        <CheckCircle className="h-4 w-4 text-green-600" />
+                                        <span className="text-xs text-muted-foreground">Click row to view</span>
+                                      </div>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    {result.status === 'success' && result.transaction_id ? (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          navigate(`/transactions/${result.transaction_id}`, {
+                                            state: {
+                                              from: '/manual-prediction',
+                                              preserveBatchResults: true
+                                            }
+                                          });
+                                        }}
+                                      >
+                                        View SHAP
+                                      </Button>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">—</span>
                                     )}
                                   </TableCell>
                                 </TableRow>
@@ -533,59 +723,43 @@ export default function ManualPrediction() {
             {/* Input Form */}
             <Card>
               <CardHeader>
-                <CardTitle>Transaction Features</CardTitle>
+                <CardTitle>Single Transaction Prediction</CardTitle>
                 <CardDescription>
-                  Enter the transaction data (30 features total)
+                  Paste a single transaction row with 30 comma-separated features
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* Time and Amount */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="time">Time</Label>
-                    <Input
-                      id="time"
-                      type="number"
-                      step="any"
-                      placeholder="0.0"
-                      value={time}
-                      onChange={(e) => setTime(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="amount">Amount</Label>
-                    <Input
-                      id="amount"
-                      type="number"
-                      step="any"
-                      placeholder="0.00"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {/* V Features (V1-V28) */}
+                {/* Paste Center */}
                 <div className="space-y-2">
-                  <Label>V Features (V1 - V28)</Label>
-                  <div className="grid grid-cols-4 gap-2 max-h-64 overflow-y-auto p-2 border rounded-md">
-                    {vFeatures.map((value, index) => (
-                      <div key={index} className="space-y-1">
-                        <Label htmlFor={`v${index + 1}`} className="text-xs">
-                          V{index + 1}
-                        </Label>
-                        <Input
-                          id={`v${index + 1}`}
-                          type="number"
-                          step="any"
-                          placeholder="0.0"
-                          value={value}
-                          onChange={(e) => handleVFeatureChange(index, e.target.value)}
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                    ))}
-                  </div>
+                  <Label htmlFor="pasted-features">
+                    Paste Transaction Features
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Paste a single transaction row with 30 comma-separated values: <br />
+                    <code className="text-xs bg-muted px-1 py-0.5 rounded">Time, V1, V2, V3, ..., V28, Amount</code>
+                  </p>
+                  <Textarea
+                    id="pasted-features"
+                    placeholder="Example: 121958, 0.279, -0.428, -0.600, ..., -0.202, 31.17"
+                    value={pastedFeatures}
+                    onChange={(e) => handlePasteChange(e.target.value)}
+                    className="font-mono text-sm min-h-[120px]"
+                    rows={5}
+                  />
+                  {parseError && (
+                    <Alert variant="destructive">
+                      <AlertDescription className="text-sm">
+                        {parseError}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {pastedFeatures && !parseError && (
+                    <Alert>
+                      <AlertDescription className="text-sm text-green-600 dark:text-green-400">
+                        ✅ Valid format detected: 30 features ready for prediction
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
 
                 {/* Actions */}
@@ -626,8 +800,9 @@ export default function ManualPrediction() {
               <CardContent className="space-y-6">
                 {!result ? (
                   <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                    <AlertTriangle className="h-12 w-12 mb-4 opacity-50" />
-                    <p>Enter transaction features and click "Predict Fraud Risk"</p>
+                    <Clipboard className="h-12 w-12 mb-4 opacity-50" />
+                    <p>Paste transaction features above and click "Predict Fraud Risk"</p>
+                    <p className="text-xs mt-2">Format: 30 comma-separated values (Time, V1-V28, Amount)</p>
                   </div>
                 ) : (
                   <>
@@ -691,9 +866,22 @@ export default function ManualPrediction() {
 
                     {/* Action Buttons */}
                     <div className="flex gap-2">
+                      {result.transaction_id && (
+                        <Button
+                          className="flex-1"
+                          onClick={() => navigate(`/transactions/${result.transaction_id}`, {
+                            state: {
+                              from: '/manual-prediction',
+                              preservePasteResult: true
+                            }
+                          })}
+                        >
+                          View SHAP Explanation
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
-                        className="flex-1"
+                        className={result.transaction_id ? "" : "flex-1"}
                         onClick={() => navigate("/transactions")}
                       >
                         View Transaction History
