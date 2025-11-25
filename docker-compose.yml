@@ -11,8 +11,8 @@ services:
     environment:
       - PORT=8000
       - FIREBASE_CREDENTIALS_PATH=/app/firebase.json
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-      - ENVIRONMENT=development
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./firebase.json:/app/firebase.json:ro
       - ./models:/app/models:ro
