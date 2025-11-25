@@ -126,8 +126,19 @@ except Exception as e:
 # Paths
 # =====================================================
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # project root
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
+
+# Check if Railway volume is mounted (single volume solution)
+# Volume should be mounted at /app/storage with subdirectories: models/ and data/processed/
+STORAGE_VOLUME = os.path.join(BASE_DIR, "storage")
+if os.path.exists(STORAGE_VOLUME):
+    # Use volume-mounted paths
+    MODELS_DIR = os.path.join(STORAGE_VOLUME, "models")
+    DATA_DIR = os.path.join(STORAGE_VOLUME, "data", "processed")
+    logger.info("📦 Using Railway volume for models and data")
+else:
+    # Use default paths (for local development)
+    MODELS_DIR = os.path.join(BASE_DIR, "models")
+    DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
 
 # =====================================================
 # Model Validation Function

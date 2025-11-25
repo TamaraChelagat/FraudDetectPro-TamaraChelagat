@@ -20,14 +20,14 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY app/ ./app/
 
-# Create directories for models and data (they may not be in Git)
-# These directories MUST exist in your Git repo for Railway to build
+# Create directories for models and data
+# Files will be provided via Railway Volumes (mount at /app/models and /app/data/processed)
+# For local development, you can copy files manually or use volumes
 RUN mkdir -p ./models ./data/processed
 
-# Copy models and data
-# IMPORTANT: These must be committed to Git or Railway build will fail
-COPY models/ ./models/
-COPY data/processed/ ./data/processed/
+# Note: Model and data files are NOT copied here
+# They should be provided via Railway Volumes or downloaded at runtime
+# This allows deployment without committing large files to Git
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
