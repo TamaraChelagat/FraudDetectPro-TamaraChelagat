@@ -15,7 +15,7 @@ firebase-admin==6.5.0
 scikit-learn==1.7.2
 xgboost==3.0.5
 joblib==1.5.2
-numpy==2.3.3
+numpy>=1.23.5,<2.0.0  # TensorFlow 2.15.0 requires numpy < 2.0.0
 
 # TensorFlow (for neural network feature extraction)
 # Using CPU-only version to reduce size (~500MB vs ~2GB)
