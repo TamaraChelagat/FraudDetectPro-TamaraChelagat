@@ -489,16 +489,3 @@ npm run lint
 - Firebase Documentation: https://firebase.google.com/docs
 - SHAP Documentation: https://shap.readthedocs.io/
 
-## 14. License
-
-[Specify license information]
-
-## 15. Contact and Support
-
-[Specify contact information and support channels]
-
----
-
-**Version**: 2.2  
-**Last Updated**: 2024  
-**Status**: Development/Production Ready
